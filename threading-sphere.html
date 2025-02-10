@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Spherical Grid with Animated Silvery Threads</title>
+    <title>Spherical Grid with Curvy Threads</title>
     <style>
       body {
         margin: 0;
@@ -183,10 +183,9 @@
           threads.push({
             p1,
             p2,
-            progress: 0, // 0 means not extended at all
+            progress: 0, // 0 means not extended at all; will go to 1 over time.
             speed: 0.005, // adjust this for the winding speed
             perp, // constant perpendicular offset vector
-            // You can later adjust amplitude or number of waves if desired.
           });
         }
       });
@@ -211,52 +210,37 @@
             thread.progress += thread.speed;
             if (thread.progress > 1) thread.progress = 1;
           }
-          // Determine how to draw the thread.
           ctx.strokeStyle = "silver";
           ctx.lineWidth = 2;
           ctx.beginPath();
+          const samples = 20;
+          const numWaves = 3; // number of snake-like waves along the thread
+          const amplitude = 0.15; // how far the thread wiggles (in unit sphere space)
 
-          // If the thread is fully extended, draw it taut (a straight line).
-          if (thread.progress === 1) {
-            const rP1 = rotatePoint(thread.p1, rotX, rotY);
-            const rP2 = rotatePoint(thread.p2, rotX, rotY);
-            const proj1 = project(rP1);
-            const proj2 = project(rP2);
-            ctx.moveTo(proj1.x, proj1.y);
-            ctx.lineTo(proj2.x, proj2.y);
-          } else {
-            // Otherwise, draw a snake-like winding thread.
-            const samples = 20;
-            const numWaves = 3; // number of snake-like waves along the thread
-            const amplitude = 0.15; // how far the thread wiggles (in unit sphere space)
-            for (let i = 0; i <= samples; i++) {
-              // t runs from 0 to thread.progress.
-              const t = (i / samples) * thread.progress;
-              // Base point (linear interpolation).
-              let base = lerp(thread.p1, thread.p2, t);
-              // Add an oscillatory perpendicular offset.
-              // At the very beginning, no offset; at the end, we want it to snap straight.
-              let offset = { x: 0, y: 0, z: 0 };
-              if (thread.progress < 1) {
-                const wave = Math.sin(t * Math.PI * numWaves);
-                offset = {
-                  x: wave * amplitude * thread.perp.x,
-                  y: wave * amplitude * thread.perp.y,
-                  z: wave * amplitude * thread.perp.z,
-                };
-              }
-              const point3D = {
-                x: base.x + offset.x,
-                y: base.y + offset.y,
-                z: base.z + offset.z,
-              };
-              const rotated = rotatePoint(point3D, rotX, rotY);
-              const proj = project(rotated);
-              if (i === 0) {
-                ctx.moveTo(proj.x, proj.y);
-              } else {
-                ctx.lineTo(proj.x, proj.y);
-              }
+          // Draw the curvy, winding thread along its current progress.
+          for (let i = 0; i <= samples; i++) {
+            // t runs from 0 to thread.progress.
+            const t = (i / samples) * thread.progress;
+            // Base point via linear interpolation.
+            const base = lerp(thread.p1, thread.p2, t);
+            // Always add an oscillatory perpendicular offset for a curvy look.
+            const wave = Math.sin(t * Math.PI * numWaves);
+            const offset = {
+              x: wave * amplitude * thread.perp.x,
+              y: wave * amplitude * thread.perp.y,
+              z: wave * amplitude * thread.perp.z,
+            };
+            const point3D = {
+              x: base.x + offset.x,
+              y: base.y + offset.y,
+              z: base.z + offset.z,
+            };
+            const rotated = rotatePoint(point3D, rotX, rotY);
+            const proj = project(rotated);
+            if (i === 0) {
+              ctx.moveTo(proj.x, proj.y);
+            } else {
+              ctx.lineTo(proj.x, proj.y);
             }
           }
           ctx.stroke();
