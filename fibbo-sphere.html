@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cosmic Sphere of Light</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: black; /* The darkness of space */
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Our script is a module, so we can use ES6 imports -->
+    <script type="module">
+      // Import Three.js and OrbitControls via full CDN URLs:
+      import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js";
+      import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js";
+
+      // === Scene Setup ===
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000000);
+      const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      );
+      camera.position.z = 5;
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // === OrbitControls for user interactivity (rotate/zoom the sphere) ===
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+
+      // === Create a Sphere of Points (using the Fibonacci Sphere algorithm) ===
+      const pointsGroup = new THREE.Group();
+      scene.add(pointsGroup);
+
+      const numPoints = 200; // Total number of points
+      const sphereRadius = 2; // Radius of the sphere
+
+      // Generate positions on a sphere evenly
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      const points = [];
+      for (let i = 0; i < numPoints; i++) {
+        const y = 1 - (i / (numPoints - 1)) * 2; // y goes from 1 to -1
+        const r = Math.sqrt(1 - y * y);
+        const theta = goldenAngle * i;
+        const x = Math.cos(theta) * r;
+        const z = Math.sin(theta) * r;
+        points.push(new THREE.Vector3(x, y, z).multiplyScalar(sphereRadius));
+      }
+
+      // Create little spheres for points of light
+      const basePointSize = 0.05;
+      const pointMeshes = [];
+      for (let i = 0; i < numPoints; i++) {
+        const geometry = new THREE.SphereGeometry(basePointSize, 16, 16);
+        const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(points[i]);
+        mesh.userData.index = i; // store index for later reference
+        pointsGroup.add(mesh);
+        pointMeshes.push(mesh);
+      }
+
+      // === Precompute Fibonacci Numbers ===
+      // We'll use these numbers to determine a partner point when a point is clicked.
+      const fibNumbers = [];
+      let a = 1,
+        b = 1;
+      while (a < numPoints) {
+        fibNumbers.push(a);
+        const temp = a + b;
+        a = b;
+        b = temp;
+      }
+
+      // === Raycaster Setup for Interactivity ===
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+      let INTERSECTED = null; // the currently hovered point
+
+      // Array to store active spiral threads
+      const threads = [];
+
+      // === Spiral Thread Creation ===
+      // When a point is clicked, create a spiral thread connecting it to a partner point.
+      function createSpiralThread(start, end) {
+        const numPointsCurve = 100;
+        const curvePoints = [];
+        const direction = new THREE.Vector3().subVectors(end, start);
+        const distance = direction.length();
+        direction.normalize();
+
+        // Find two vectors perpendicular to the direction
+        let arbitrary = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(direction.dot(arbitrary)) > 0.9) {
+          arbitrary.set(1, 0, 0);
+        }
+        const perp1 = new THREE.Vector3()
+          .crossVectors(direction, arbitrary)
+          .normalize();
+        const perp2 = new THREE.Vector3()
+          .crossVectors(direction, perp1)
+          .normalize();
+
+        // Randomize spiral parameters
+        const turns = Math.random() * 2 + 1; // between 1 and 3 turns
+        const amplitude = distance * 0.1; // amplitude is 10% of the distance
+
+        // Build the spiral curve
+        for (let i = 0; i <= numPointsCurve; i++) {
+          const t = i / numPointsCurve;
+          // Base linear interpolation between start and end
+          const pointOnLine = new THREE.Vector3().lerpVectors(start, end, t);
+          // Add spiral offset using sinusoidal modulation
+          const angle = turns * Math.PI * 2 * t;
+          const offset = new THREE.Vector3()
+            .addScaledVector(
+              perp1,
+              Math.cos(angle) * amplitude * Math.sin(Math.PI * t)
+            )
+            .addScaledVector(
+              perp2,
+              Math.sin(angle) * amplitude * Math.sin(Math.PI * t)
+            );
+          const spiralPoint = pointOnLine.clone().add(offset);
+          curvePoints.push(spiralPoint);
+        }
+
+        // Create geometry for the spiral thread
+        const curveGeometry = new THREE.BufferGeometry().setFromPoints(
+          curvePoints
+        );
+        // Set draw range to zero initially for a progressive "emission" effect
+        curveGeometry.setDrawRange(0, 0);
+        const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffaa00 });
+        const line = new THREE.Line(curveGeometry, lineMaterial);
+        line.userData.totalPoints = numPointsCurve + 1;
+        line.userData.currentPoints = 0;
+        scene.add(line);
+        threads.push(line);
+      }
+
+      // Animate the drawing of spiral threads gradually
+      function animateThreads() {
+        threads.forEach((thread) => {
+          const geom = thread.geometry;
+          let current = thread.userData.currentPoints;
+          if (current < thread.userData.totalPoints) {
+            current += 2; // Speed of thread emission; adjust as desired
+            thread.userData.currentPoints = Math.min(
+              current,
+              thread.userData.totalPoints
+            );
+            geom.setDrawRange(0, thread.userData.currentPoints);
+          }
+        });
+      }
+
+      // === Event Listeners for Mouse Interaction ===
+
+      // Update mouse position for raycasting
+      window.addEventListener(
+        "mousemove",
+        (event) => {
+          mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+          mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        },
+        false
+      );
+
+      // On click, if a point is selected, create a spiral thread to its Fibonacci partner
+      window.addEventListener(
+        "click",
+        (event) => {
+          raycaster.setFromCamera(mouse, camera);
+          const intersects = raycaster.intersectObjects(pointMeshes);
+          if (intersects.length > 0) {
+            const selected = intersects[0].object;
+            const index = selected.userData.index;
+            // Pick a random Fibonacci offset and calculate the partner index
+            const fibOffset =
+              fibNumbers[Math.floor(Math.random() * fibNumbers.length)];
+            const partnerIndex = (index + fibOffset) % numPoints;
+            const startPos = selected.position.clone();
+            const partnerPos = pointMeshes[partnerIndex].position.clone();
+            createSpiralThread(startPos, partnerPos);
+          }
+        },
+        false
+      );
+
+      // === Animation Loop ===
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+
+        // Check for hover on points
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(pointMeshes);
+        if (intersects.length > 0) {
+          if (INTERSECTED !== intersects[0].object) {
+            if (INTERSECTED) {
+              INTERSECTED.scale.set(1, 1, 1);
+              INTERSECTED.material.color.set(0xffffff);
+            }
+            INTERSECTED = intersects[0].object;
+            INTERSECTED.scale.set(1.5, 1.5, 1.5);
+            INTERSECTED.material.color.set(0xffffaa);
+          }
+        } else {
+          if (INTERSECTED) {
+            INTERSECTED.scale.set(1, 1, 1);
+            INTERSECTED.material.color.set(0xffffff);
+            INTERSECTED = null;
+          }
+        }
+
+        animateThreads();
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      // Adjust camera and renderer on window resize
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Spherical Grid</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #0a0a1e; /* dark background */
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <script>
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      // Resize canvas to fill the window.
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        center.x = canvas.width / 2;
+        center.y = canvas.height / 2;
+      }
+      window.addEventListener("resize", resize);
+
+      // Center of the canvas.
+      const center = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+      resize();
+
+      // Rotation angles and angular velocities.
+      let rotX = 0,
+        rotY = 0;
+      let angularVelocityX = 0,
+        angularVelocityY = 0;
+      let isDragging = false;
+      let lastMouseX = 0,
+        lastMouseY = 0;
+
+      // Sphere grid settings.
+      const sphereRadius = 200; // scale factor for projection
+      const spherePoints = [];
+      // We’ll generate a grid using latitude and longitude values.
+      // Add the poles first.
+      spherePoints.push({ x: 0, y: 1, z: 0 }); // North pole
+      spherePoints.push({ x: 0, y: -1, z: 0 }); // South pole
+
+      // Define step sizes (in degrees) for latitudes and longitudes.
+      const latStep = 10;
+      const lonStep = 10;
+
+      // Generate grid intersections (excluding the poles).
+      for (let lat = -80; lat <= 80; lat += latStep) {
+        const latRad = (lat * Math.PI) / 180;
+        for (let lon = 0; lon < 360; lon += lonStep) {
+          const lonRad = (lon * Math.PI) / 180;
+          const x = Math.cos(latRad) * Math.cos(lonRad);
+          const y = Math.sin(latRad);
+          const z = Math.cos(latRad) * Math.sin(lonRad);
+          spherePoints.push({ x, y, z });
+        }
+      }
+
+      // Rotate a 3D point by rotY (around the Y-axis) and then rotX (around the X-axis).
+      function rotatePoint(pt, rotX, rotY) {
+        // Rotate around the Y-axis.
+        const cosY = Math.cos(rotY);
+        const sinY = Math.sin(rotY);
+        const x1 = pt.x * cosY + pt.z * sinY;
+        const y1 = pt.y;
+        const z1 = -pt.x * sinY + pt.z * cosY;
+
+        // Rotate around the X-axis.
+        const cosX = Math.cos(rotX);
+        const sinX = Math.sin(rotX);
+        const x2 = x1;
+        const y2 = y1 * cosX - z1 * sinX;
+        const z2 = y1 * sinX + z1 * cosX;
+
+        return { x: x2, y: y2, z: z2 };
+      }
+
+      // Project a 3D point to 2D using a simple perspective projection.
+      function project(pt) {
+        const d = 2; // distance from the viewer
+        const factor = d / (d + pt.z);
+        const x2d = pt.x * factor * sphereRadius;
+        const y2d = pt.y * factor * sphereRadius;
+        return { x: center.x + x2d, y: center.y - y2d };
+      }
+
+      // Mouse event handlers for click-and-drag rotation.
+      canvas.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        if (isDragging) {
+          const dx = e.clientX - lastMouseX;
+          const dy = e.clientY - lastMouseY;
+          // Sensitivity multiplier for smooth rotation.
+          const sensitivity = 0.005;
+          rotY += dx * sensitivity;
+          rotX += dy * sensitivity;
+          // Update angular velocity based on mouse movement.
+          angularVelocityY = dx * sensitivity;
+          angularVelocityX = dy * sensitivity;
+          lastMouseX = e.clientX;
+          lastMouseY = e.clientY;
+        }
+      });
+
+      canvas.addEventListener("mouseup", () => {
+        isDragging = false;
+      });
+      canvas.addEventListener("mouseleave", () => {
+        isDragging = false;
+      });
+
+      // Animation loop.
+      function animate() {
+        // Clear the canvas with a dark background.
+        ctx.fillStyle = "#0a0a1e";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // If not dragging, keep the sphere rotating and apply friction.
+        if (!isDragging) {
+          rotX += angularVelocityX;
+          rotY += angularVelocityY;
+          angularVelocityX *= 0.95;
+          angularVelocityY *= 0.95;
+        }
+
+        // Set up the drawing style for the glowing points.
+        ctx.fillStyle = "white";
+        ctx.shadowBlur = 3;
+        ctx.shadowColor = "white";
+
+        // For each point on the sphere, apply rotation and project it to 2D.
+        for (let pt of spherePoints) {
+          const rotated = rotatePoint(pt, rotX, rotY);
+          const proj = project(rotated);
+          ctx.beginPath();
+          ctx.arc(proj.x, proj.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        requestAnimationFrame(animate);
+      }
+
+      animate();
+    </script>
+  </body>
+</html>
