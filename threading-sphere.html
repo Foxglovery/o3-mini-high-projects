@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Spherical Grid with Animated Silvery Threads</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #0a0a1e;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <script>
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      // Set canvas size and update center.
+      const center = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        center.x = canvas.width / 2;
+        center.y = canvas.height / 2;
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      // Rotation and dragging variables.
+      let rotX = 0,
+        rotY = 0;
+      let angularVelocityX = 0,
+        angularVelocityY = 0;
+      let isDragging = false;
+      let lastMouseX = 0,
+        lastMouseY = 0;
+      let currentMouse = { x: -1000, y: -1000 };
+
+      // Global arrays for sphere points and threads.
+      const spherePoints = [];
+      const threads = [];
+
+      // Sphere grid settings.
+      const sphereRadius = 200; // for projection scaling
+
+      // Add the poles.
+      spherePoints.push({ x: 0, y: 1, z: 0 }); // North pole
+      spherePoints.push({ x: 0, y: -1, z: 0 }); // South pole
+
+      // Generate grid intersections (excluding the poles) via lat/lon.
+      const latStep = 10;
+      const lonStep = 10;
+      for (let lat = -80; lat <= 80; lat += latStep) {
+        const latRad = (lat * Math.PI) / 180;
+        for (let lon = 0; lon < 360; lon += lonStep) {
+          const lonRad = (lon * Math.PI) / 180;
+          const x = Math.cos(latRad) * Math.cos(lonRad);
+          const y = Math.sin(latRad);
+          const z = Math.cos(latRad) * Math.sin(lonRad);
+          spherePoints.push({ x, y, z });
+        }
+      }
+
+      // Helper: Linear interpolation between two 3D points.
+      function lerp(a, b, t) {
+        return {
+          x: a.x * (1 - t) + b.x * t,
+          y: a.y * (1 - t) + b.y * t,
+          z: a.z * (1 - t) + b.z * t,
+        };
+      }
+
+      // Helper: Compute a perpendicular vector to a given 3D vector.
+      function getPerpendicular(vec) {
+        // Use (0,1,0) unless vec is too vertical.
+        const arbitrary =
+          Math.abs(vec.y) < 0.9 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+        // Cross product: vec x arbitrary.
+        const perp = {
+          x: vec.y * arbitrary.z - vec.z * arbitrary.y,
+          y: vec.z * arbitrary.x - vec.x * arbitrary.z,
+          z: vec.x * arbitrary.y - vec.y * arbitrary.x,
+        };
+        const len = Math.hypot(perp.x, perp.y, perp.z);
+        return { x: perp.x / len, y: perp.y / len, z: perp.z / len };
+      }
+
+      // Rotate a 3D point first around the Y-axis then the X-axis.
+      function rotatePoint(pt, rotX, rotY) {
+        // Rotate around Y-axis.
+        const cosY = Math.cos(rotY);
+        const sinY = Math.sin(rotY);
+        const x1 = pt.x * cosY + pt.z * sinY;
+        const y1 = pt.y;
+        const z1 = -pt.x * sinY + pt.z * cosY;
+
+        // Rotate around X-axis.
+        const cosX = Math.cos(rotX);
+        const sinX = Math.sin(rotX);
+        const x2 = x1;
+        const y2 = y1 * cosX - z1 * sinX;
+        const z2 = y1 * sinX + z1 * cosX;
+
+        return { x: x2, y: y2, z: z2 };
+      }
+
+      // Simple perspective projection from 3D to 2D.
+      function project(pt) {
+        const d = 2; // viewer distance
+        const factor = d / (d + pt.z);
+        const x2d = pt.x * factor * sphereRadius;
+        const y2d = pt.y * factor * sphereRadius;
+        return { x: center.x + x2d, y: center.y - y2d };
+      }
+
+      // Mouse event handlers for drag-rotation.
+      canvas.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        currentMouse.x = e.clientX;
+        currentMouse.y = e.clientY;
+        if (isDragging) {
+          const dx = e.clientX - lastMouseX;
+          const dy = e.clientY - lastMouseY;
+          const sensitivity = 0.005;
+          rotY += dx * sensitivity;
+          rotX += dy * sensitivity;
+          angularVelocityY = dx * sensitivity;
+          angularVelocityX = dy * sensitivity;
+          lastMouseX = e.clientX;
+          lastMouseY = e.clientY;
+        }
+      });
+
+      canvas.addEventListener("mouseup", () => {
+        isDragging = false;
+      });
+      canvas.addEventListener("mouseleave", () => {
+        isDragging = false;
+        currentMouse.x = -1000;
+        currentMouse.y = -1000;
+      });
+
+      // When clicking, check for a sphere point and initiate a thread.
+      canvas.addEventListener("click", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        let closestPoint = null;
+        let minDist = Infinity;
+
+        // Find the sphere point closest to the click (after rotation & projection).
+        for (let pt of spherePoints) {
+          const rotated = rotatePoint(pt, rotX, rotY);
+          const proj = project(rotated);
+          const dx = proj.x - mouseX;
+          const dy = proj.y - mouseY;
+          const d = Math.hypot(dx, dy);
+          if (d < minDist) {
+            minDist = d;
+            closestPoint = pt;
+          }
+        }
+
+        const clickThreshold = 8; // in pixels
+        if (minDist < clickThreshold && closestPoint !== null) {
+          // p1 is the clicked point.
+          const p1 = closestPoint;
+          // p2 is the mirror opposite (exact antipodal point).
+          const p2 = { x: -p1.x, y: -p1.y, z: -p1.z };
+          // Get a perpendicular vector (for the snake-like wiggle).
+          const perp = getPerpendicular(p1);
+          // Create a new thread object.
+          threads.push({
+            p1,
+            p2,
+            progress: 0, // 0 means not extended at all
+            speed: 0.005, // adjust this for the winding speed
+            perp, // constant perpendicular offset vector
+            // You can later adjust amplitude or number of waves if desired.
+          });
+        }
+      });
+
+      // Animation loop.
+      function animate() {
+        ctx.fillStyle = "#0a0a1e";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Apply inertia if not dragging.
+        if (!isDragging) {
+          rotX += angularVelocityX;
+          rotY += angularVelocityY;
+          angularVelocityX *= 0.95;
+          angularVelocityY *= 0.95;
+        }
+
+        // First, draw the threads so they rotate with the sphere.
+        threads.forEach((thread) => {
+          // Update the thread's extension progress.
+          if (thread.progress < 1) {
+            thread.progress += thread.speed;
+            if (thread.progress > 1) thread.progress = 1;
+          }
+          // Determine how to draw the thread.
+          ctx.strokeStyle = "silver";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+
+          // If the thread is fully extended, draw it taut (a straight line).
+          if (thread.progress === 1) {
+            const rP1 = rotatePoint(thread.p1, rotX, rotY);
+            const rP2 = rotatePoint(thread.p2, rotX, rotY);
+            const proj1 = project(rP1);
+            const proj2 = project(rP2);
+            ctx.moveTo(proj1.x, proj1.y);
+            ctx.lineTo(proj2.x, proj2.y);
+          } else {
+            // Otherwise, draw a snake-like winding thread.
+            const samples = 20;
+            const numWaves = 3; // number of snake-like waves along the thread
+            const amplitude = 0.15; // how far the thread wiggles (in unit sphere space)
+            for (let i = 0; i <= samples; i++) {
+              // t runs from 0 to thread.progress.
+              const t = (i / samples) * thread.progress;
+              // Base point (linear interpolation).
+              let base = lerp(thread.p1, thread.p2, t);
+              // Add an oscillatory perpendicular offset.
+              // At the very beginning, no offset; at the end, we want it to snap straight.
+              let offset = { x: 0, y: 0, z: 0 };
+              if (thread.progress < 1) {
+                const wave = Math.sin(t * Math.PI * numWaves);
+                offset = {
+                  x: wave * amplitude * thread.perp.x,
+                  y: wave * amplitude * thread.perp.y,
+                  z: wave * amplitude * thread.perp.z,
+                };
+              }
+              const point3D = {
+                x: base.x + offset.x,
+                y: base.y + offset.y,
+                z: base.z + offset.z,
+              };
+              const rotated = rotatePoint(point3D, rotX, rotY);
+              const proj = project(rotated);
+              if (i === 0) {
+                ctx.moveTo(proj.x, proj.y);
+              } else {
+                ctx.lineTo(proj.x, proj.y);
+              }
+            }
+          }
+          ctx.stroke();
+        });
+
+        // Now draw the sphere's points.
+        spherePoints.forEach((pt) => {
+          const rotated = rotatePoint(pt, rotX, rotY);
+          const proj = project(rotated);
+
+          // Check if the mouse is near for hover effects.
+          const dx = proj.x - currentMouse.x;
+          const dy = proj.y - currentMouse.y;
+          const dist = Math.hypot(dx, dy);
+          const hoverThreshold = 15;
+
+          let pointRadius = 2;
+          let shadowBlur = 3;
+          if (dist < hoverThreshold) {
+            pointRadius = 4;
+            shadowBlur = 10;
+          }
+          ctx.fillStyle = "white";
+          ctx.shadowBlur = shadowBlur;
+          ctx.shadowColor = "white";
+          ctx.beginPath();
+          ctx.arc(proj.x, proj.y, pointRadius, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        requestAnimationFrame(animate);
+      }
+
+      animate();
+    </script>
+  </body>
+</html>
